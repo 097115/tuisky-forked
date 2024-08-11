@@ -1,0 +1,68 @@
+name: CD
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - "*"
+
+jobs:
+  publish:
+    name: Publishing ${{ matrix.build_target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        build_target: [linux]
+        include:
+          - build_target: linux
+            os: ubuntu-latest
+            artifact_suffix: linux-x86_64
+            target: x86_64-unknown-linux-musl
+            features: ''
+    steps:
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          target: ${{ matrix.target }}
+          profile: minimal
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt update
+          sudo apt install libncursesw5
+      - uses: actions/checkout@v2
+        name: Checkout src
+      - uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Running cargo build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+      - name: Extract git tag
+        shell: bash
+        run: echo "##[set-output name=tag;]$(echo ${GITHUB_REF#refs/tags/})"
+        id: extract_tag
+      - name: Packaging assets
+        shell: bash
+        run: |
+          cd target/
+          ls -la
+          cd release
+          ls -la
+          tar czvf tuisky-${{ matrix.target }}.tar.gz tuisky*
+          shasum -a 256 tuisky-${{ matrix.target }}.tar.gz > tuisky-${{ matrix.target }}.sha256
+      - name: Releasing assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: target/release/tuisky-*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
